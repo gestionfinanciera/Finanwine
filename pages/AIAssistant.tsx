@@ -1,16 +1,18 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { chatWithGemini, analyzeImage, analyzeVideo } from '../services/geminiService';
-import { Message } from '../types';
+import { useApp } from '../App';
+import { chatWithGemini, analyzeFinancialDocument } from '../services/geminiService';
+import { Message, Transaction } from '../types';
 
 const AIAssistant = () => {
-  const [activeTab, setActiveTab] = useState<'chat' | 'image' | 'video'>('chat');
+  const { transactions, goals, addTransaction } = useApp();
+  const [activeTab, setActiveTab] = useState<'chat' | 'image'>('chat');
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'model', text: '¡Hola! Soy tu asistente de Finanwise. ¿En qué puedo ayudarte hoy? Puedo analizar tus gastos, ayudarte con un presupuesto o explicarte conceptos complejos.', timestamp: new Date() }
+    { role: 'model', text: '¡Hola! Soy tu asistente inteligente de Finanwise. Conozco tus movimientos recientes y tus metas. ¿Quieres que analicemos tus gastos de este mes o te ayude con un plan de ahorro?', timestamp: new Date() }
   ]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState('');
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   
@@ -20,23 +22,25 @@ const AIAssistant = () => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isLoading]);
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputText.trim() || isLoading) return;
 
-    const userMessage: Message = { role: 'user', text: inputText, timestamp: new Date() };
+    const userMsg = inputText;
+    const userMessage: Message = { role: 'user', text: userMsg, timestamp: new Date() };
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setIsLoading(true);
 
     try {
-      const response = await chatWithGemini(inputText);
-      const modelMessage: Message = { role: 'model', text: response || 'Lo siento, hubo un error.', timestamp: new Date() };
+      // Pasamos las transacciones y metas actuales para que la IA tenga contexto real
+      const response = await chatWithGemini(userMsg, { transactions, goals });
+      const modelMessage: Message = { role: 'model', text: response || 'Lo siento, tuve un problema analizando tus datos.', timestamp: new Date() };
       setMessages(prev => [...prev, modelMessage]);
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', text: 'Error al conectar con la IA.', timestamp: new Date() }]);
+      setMessages(prev => [...prev, { role: 'model', text: 'Hubo un error de conexión con la red de Finanwise. Por favor, intenta de nuevo.', timestamp: new Date() }]);
     } finally {
       setIsLoading(false);
     }
@@ -55,165 +59,222 @@ const AIAssistant = () => {
   const handleAnalyze = async () => {
     if (!selectedFile || isLoading) return;
     setIsLoading(true);
-    setAnalysisResult('Analizando con Gemini...');
+    setAnalysisResult(null);
 
     try {
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64 = (reader.result as string).split(',')[1];
-        let res = '';
-        if (activeTab === 'image') {
-          res = await analyzeImage(base64, selectedFile.type, '');
-        } else {
-          res = await analyzeVideo(base64, selectedFile.type, '');
+        const res = await analyzeFinancialDocument(base64, selectedFile.type);
+        if (res) {
+          const parsed = JSON.parse(res);
+          setAnalysisResult(parsed);
         }
-        setAnalysisResult(res);
       };
       reader.readAsDataURL(selectedFile);
     } catch (error) {
-      setAnalysisResult('Error durante el análisis.');
+      alert('Error analizando el documento.');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const saveAnalyzedTransaction = () => {
+    if (analysisResult) {
+      const newTx: Transaction = {
+        id: Math.random().toString(36).substr(2, 9),
+        ...analysisResult,
+        date: new Date(analysisResult.date + 'T12:00:00'),
+        amount: parseFloat(analysisResult.amount)
+      };
+      addTransaction(newTx);
+      setAnalysisResult(null);
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      alert('Transacción guardada exitosamente en tu presupuesto.');
+    }
+  };
+
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] md:h-screen max-w-5xl mx-auto w-full p-4 md:p-8 animate-fade-in">
-      <header className="mb-6 flex flex-col gap-2">
-        <h1 className="text-3xl font-black flex items-center gap-3">
-          <span className="p-2 bg-primary/20 text-primary rounded-xl">
-            <span className="material-symbols-outlined">psychology</span>
-          </span>
-          Finanwise Intelligence
-        </h1>
-        <p className="text-text-sec-light dark:text-text-sec-dark text-sm font-medium">
-          Potenciando tus finanzas con Gemini Pro 3
-        </p>
+    <div className="flex flex-col h-screen max-w-6xl mx-auto w-full p-4 md:p-8 animate-fade-in overflow-hidden">
+      <header className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-black flex items-center gap-3">
+            <span className="p-2 bg-primary/20 text-primary rounded-xl">
+              <span className="material-symbols-outlined text-3xl">psychology</span>
+            </span>
+            Finanwise Intelligence
+          </h1>
+          <p className="text-text-sec-light dark:text-text-sec-dark text-xs font-bold uppercase tracking-widest opacity-60">
+            Desarrollado por Gemini 3 Pro
+          </p>
+        </div>
+        
+        <div className="flex bg-card-light dark:bg-card-dark rounded-2xl p-1.5 border border-border-light dark:border-border-dark shadow-sm">
+          <button 
+            onClick={() => setActiveTab('chat')} 
+            className={`px-8 py-2.5 rounded-xl text-sm font-black transition-all ${activeTab === 'chat' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-text-sec-light hover:text-text-main-light'}`}
+          >
+            Chat Experto
+          </button>
+          <button 
+            onClick={() => setActiveTab('image')} 
+            className={`px-8 py-2.5 rounded-xl text-sm font-black transition-all ${activeTab === 'image' ? 'bg-primary text-black shadow-lg shadow-primary/20' : 'text-text-sec-light hover:text-text-main-light'}`}
+          >
+            Escanear Recibos
+          </button>
+        </div>
       </header>
 
-      <div className="flex bg-card-light dark:bg-card-dark rounded-xl p-1 mb-6 border border-border-light dark:border-border-dark w-fit shadow-sm">
-        <button 
-          onClick={() => setActiveTab('chat')} 
-          className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'chat' ? 'bg-primary text-[#102216]' : 'hover:bg-background-light dark:hover:bg-background-dark/30'}`}
-        >
-          Chat
-        </button>
-        <button 
-          onClick={() => setActiveTab('image')} 
-          className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'image' ? 'bg-primary text-[#102216]' : 'hover:bg-background-light dark:hover:bg-background-dark/30'}`}
-        >
-          Análisis de Recibos
-        </button>
-        <button 
-          onClick={() => setActiveTab('video')} 
-          className={`px-6 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'video' ? 'bg-primary text-[#102216]' : 'hover:bg-background-light dark:hover:bg-background-dark/30'}`}
-        >
-          Análisis de Videos
-        </button>
-      </div>
-
-      <div className="flex-1 min-h-0 bg-card-light dark:bg-card-dark rounded-2xl border border-border-light dark:border-border-dark shadow-xl overflow-hidden flex flex-col relative">
+      <div className="flex-1 min-h-0 bg-card-light dark:bg-card-dark rounded-[2.5rem] border border-border-light dark:border-border-dark shadow-2xl overflow-hidden flex flex-col relative transition-colors duration-500">
         {activeTab === 'chat' ? (
           <>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 no-scrollbar">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 md:p-10 flex flex-col gap-6 no-scrollbar scroll-smooth">
               {messages.map((m, i) => (
-                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-2xl p-4 shadow-sm leading-relaxed ${
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} animate-scale-in`}>
+                  <div className={`max-w-[85%] md:max-w-[70%] rounded-[2rem] p-6 shadow-sm leading-relaxed text-sm md:text-base ${
                     m.role === 'user' 
-                      ? 'bg-primary text-[#102216] font-medium rounded-tr-none' 
-                      : 'bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-tl-none'
+                      ? 'bg-primary text-black font-bold rounded-tr-none' 
+                      : 'bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-tl-none font-medium'
                   }`}>
                     {m.text}
+                    <div className={`text-[10px] mt-2 opacity-40 font-black uppercase ${m.role === 'user' ? 'text-right' : 'text-left'}`}>
+                        {m.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </div>
                   </div>
                 </div>
               ))}
               {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-2xl rounded-tl-none p-4 flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"></span>
-                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                <div className="flex justify-start animate-fade-in">
+                  <div className="bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-[2rem] rounded-tl-none p-6 flex gap-2">
+                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                    <span className="w-2 h-2 bg-primary rounded-full animate-bounce"></span>
                   </div>
                 </div>
               )}
             </div>
-            <form onSubmit={handleSendMessage} className="p-4 border-t border-border-light dark:border-border-dark bg-background-light/30 dark:bg-background-dark/30 flex gap-2">
-              <input 
-                type="text" 
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="Pregunta algo sobre tus finanzas..."
-                className="flex-1 bg-white dark:bg-background-dark border border-border-light dark:border-border-dark rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-primary/30 transition-all text-sm"
-              />
-              <button disabled={isLoading} className="bg-primary text-[#102216] p-3 rounded-xl shadow-lg shadow-primary/20 hover:scale-105 active:scale-95 transition-all disabled:opacity-50">
-                <span className="material-symbols-outlined">send</span>
+            
+            <form onSubmit={handleSendMessage} className="p-6 md:p-8 border-t border-border-light dark:border-border-dark bg-background-light/30 dark:bg-background-dark/30 flex gap-4 items-center">
+              <div className="flex-1 relative group">
+                  <input 
+                    type="text" 
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    placeholder="Pregunta sobre tus gastos, ahorros o pide un consejo..."
+                    className="w-full bg-white dark:bg-background-dark border-2 border-transparent focus:border-primary/30 rounded-2xl px-6 py-4 outline-none transition-all text-sm md:text-base font-bold shadow-sm"
+                  />
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 opacity-30 group-focus-within:opacity-100 transition-opacity">
+                    <span className="material-symbols-outlined text-xl">mic</span>
+                  </div>
+              </div>
+              <button disabled={isLoading || !inputText.trim()} className="size-14 bg-primary text-black rounded-2xl shadow-xl shadow-primary/20 hover:scale-110 active:scale-90 transition-all disabled:opacity-50 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-2xl font-black">send</span>
               </button>
             </form>
           </>
         ) : (
-          <div className="flex-1 overflow-y-auto p-8 flex flex-col items-center gap-8 no-scrollbar">
-            <div className="flex flex-col items-center gap-4 text-center max-w-lg">
-                <div className={`size-20 rounded-full flex items-center justify-center ${activeTab === 'image' ? 'bg-blue-500/10 text-blue-500' : 'bg-purple-500/10 text-purple-500'}`}>
-                    <span className="material-symbols-outlined text-4xl">{activeTab === 'image' ? 'add_a_photo' : 'video_library'}</span>
+          <div className="flex-1 overflow-y-auto p-10 flex flex-col items-center gap-12 no-scrollbar">
+            <div className="flex flex-col items-center gap-6 text-center max-w-xl">
+                <div className="size-24 rounded-[2rem] flex items-center justify-center bg-primary/10 text-primary shadow-inner">
+                    <span className="material-symbols-outlined text-5xl">document_scanner</span>
                 </div>
-                <h2 className="text-xl font-bold">
-                    {activeTab === 'image' ? 'Analiza tus Documentos' : 'Entiende videos educativos'}
-                </h2>
-                <p className="text-sm text-text-sec-light dark:text-text-sec-dark">
-                    Sube un archivo y Gemini lo analizará por ti en segundos.
-                </p>
+                <div>
+                    <h2 className="text-2xl font-black mb-2">Asistente de Recibos</h2>
+                    <p className="text-sm font-medium text-text-sec-light leading-relaxed">
+                        Sube una foto de tu ticket o factura. Gemini extraerá automáticamente el monto, la fecha y la categoría para tu presupuesto.
+                    </p>
+                </div>
             </div>
 
-            <div className="w-full max-w-xl flex flex-col gap-6">
-                <div className="relative group">
+            <div className="w-full max-w-2xl flex flex-col gap-8">
+                <div className="relative group cursor-pointer">
                     <input 
                         type="file" 
-                        accept={activeTab === 'image' ? "image/*" : "video/*"}
+                        accept="image/*"
                         onChange={handleFileChange}
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
-                    <div className="border-2 border-dashed border-border-light dark:border-border-dark rounded-2xl p-10 flex flex-col items-center gap-4 group-hover:border-primary transition-colors bg-background-light/30 dark:bg-background-dark/30">
+                    <div className="border-3 border-dashed border-border-light dark:border-border-dark rounded-[2.5rem] p-16 flex flex-col items-center gap-6 group-hover:border-primary/50 group-hover:bg-primary/5 transition-all bg-background-light/30 dark:bg-background-dark/30">
                         {previewUrl ? (
-                            activeTab === 'image' ? (
-                                <img src={previewUrl} className="max-h-48 rounded-lg shadow-md" alt="Preview" />
-                            ) : (
-                                <div className="flex items-center gap-2 text-primary font-bold">
-                                    <span className="material-symbols-outlined">check_circle</span>
-                                    Video Cargado
+                            <div className="relative">
+                                <img src={previewUrl} className="max-h-64 rounded-2xl shadow-2xl border-4 border-white dark:border-background-dark" alt="Preview" />
+                                <div className="absolute -top-4 -right-4 size-10 bg-primary text-black rounded-full flex items-center justify-center shadow-lg">
+                                    <span className="material-symbols-outlined">check</span>
                                 </div>
-                            )
+                            </div>
                         ) : (
                             <>
-                                <span className="material-symbols-outlined text-4xl opacity-30">upload_file</span>
-                                <span className="text-sm font-bold opacity-50">Click para seleccionar archivo</span>
+                                <span className="material-symbols-outlined text-6xl opacity-20">cloud_upload</span>
+                                <div className="flex flex-col items-center gap-1">
+                                    <span className="text-lg font-black opacity-60">Arrastra tu recibo aquí</span>
+                                    <span className="text-xs font-bold opacity-30 uppercase tracking-widest">o haz clic para buscar</span>
+                                </div>
                             </>
                         )}
                     </div>
                 </div>
 
-                {selectedFile && (
+                {selectedFile && !analysisResult && (
                     <button 
                         onClick={handleAnalyze} 
                         disabled={isLoading}
-                        className="w-full bg-primary text-[#102216] font-bold py-4 rounded-xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                        className="w-full bg-primary text-black font-black py-5 rounded-2xl shadow-2xl shadow-primary/30 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-3"
                     >
                         {isLoading ? (
-                             <span className="w-5 h-5 border-2 border-[#102216] border-t-transparent rounded-full animate-spin"></span>
+                             <span className="w-6 h-6 border-3 border-black border-t-transparent rounded-full animate-spin"></span>
                         ) : (
-                            <span className="material-symbols-outlined">auto_awesome</span>
+                            <>
+                                <span className="material-symbols-outlined text-2xl">auto_awesome</span>
+                                <span>Extraer Datos con IA</span>
+                            </>
                         )}
-                        Comenzar Análisis IA
                     </button>
                 )}
 
                 {analysisResult && (
-                    <div className="bg-background-light dark:bg-background-dark/50 border border-border-light dark:border-border-dark rounded-2xl p-6 animate-fade-in">
-                        <h4 className="font-bold mb-4 flex items-center gap-2 text-primary">
-                            <span className="material-symbols-outlined text-sm">robot_2</span>
-                            Resultado del Análisis
-                        </h4>
-                        <div className="text-sm leading-relaxed whitespace-pre-wrap">
-                            {analysisResult}
+                    <div className="bg-primary/5 border-2 border-primary/20 rounded-[2rem] p-8 animate-scale-in flex flex-col gap-8 shadow-sm">
+                        <div className="flex justify-between items-center border-b border-primary/10 pb-4">
+                            <h4 className="font-black flex items-center gap-2 text-primary uppercase tracking-widest text-xs">
+                                <span className="material-symbols-outlined text-lg">verified</span>
+                                Datos Detectados
+                            </h4>
+                            <span className="text-[10px] font-black opacity-40 uppercase">Gemini Vision Pro</span>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-8">
+                            <div className="flex flex-col gap-1">
+                                <label className="text-[10px] font-black uppercase opacity-40">Concepto</label>
+                                <span className="text-lg font-black truncate">{analysisResult.description}</span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <label className="text-[10px] font-black uppercase opacity-40">Monto Total</label>
+                                <span className="text-2xl font-black text-primary">${analysisResult.amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <label className="text-[10px] font-black uppercase opacity-40">Categoría Sugerida</label>
+                                <span className="text-sm font-bold bg-primary/20 text-primary px-3 py-1 rounded-lg w-fit">{analysisResult.category}</span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <label className="text-[10px] font-black uppercase opacity-40">Fecha del Ticket</label>
+                                <span className="text-sm font-bold opacity-80">{analysisResult.date}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-4">
+                            <button 
+                                onClick={saveAnalyzedTransaction}
+                                className="flex-1 bg-primary text-black font-black py-4 rounded-xl shadow-lg hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+                            >
+                                <span className="material-symbols-outlined">add_circle</span>
+                                Guardar en Presupuesto
+                            </button>
+                            <button 
+                                onClick={() => { setAnalysisResult(null); setSelectedFile(null); setPreviewUrl(null); }}
+                                className="px-6 border-2 border-border-light dark:border-border-dark text-text-sec-light font-black rounded-xl hover:bg-red-500/10 hover:text-red-500 transition-all"
+                            >
+                                <span className="material-symbols-outlined">delete</span>
+                            </button>
                         </div>
                     </div>
                 )}
