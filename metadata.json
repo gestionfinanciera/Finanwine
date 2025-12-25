@@ -1,0 +1,7 @@
+{
+  "name": "Finanwise AI",
+  "description": "A comprehensive financial management platform powered by Gemini AI, featuring budgeting, goals tracking, and intelligent document analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
